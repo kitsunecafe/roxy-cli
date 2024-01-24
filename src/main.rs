@@ -108,6 +108,23 @@ impl<'a, P: AsRef<Path> + 'a> FilePath<'a, P> {
     }
 }
 
+struct Context {
+    pub inner: tera::Context,
+}
+
+impl Context {
+    pub fn new() -> Self {
+        Self {
+            inner: tera::Context::new(),
+        }
+    }
+
+    pub fn insert<P: AsRef<Path>, K: Serialize, V: Serialize>(&mut self, path: &P, key: K, value: V) {
+        let path = path.as_ref();
+        self.inner.insert(&key, &value);
+    }
+}
+
 fn main() -> Result<(), RoxyError> {
     let opts = Options::parse();
 

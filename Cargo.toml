@@ -10,4 +10,5 @@ roxy_core = { git = "https://github.com/kitsunecafe/roxy-core.git" }
 clap = { version = "4.4.17", features = ["derive"] }
 toml = "0.8.8"
 tera = "1.19.1"
+serde = "1.0.195"
 
