@@ -1,8 +1,10 @@
 use clap::Parser as Clap;
 use std::{
-    io::{Error, ErrorKind},
+    fs::File,
+    io::{BufReader, Error, ErrorKind, Read},
     path::{Path, PathBuf, StripPrefixError},
 };
+use toml::Table;
 
 use glob::{glob, PatternError};
 use roxy_core::roxy::{Html, Markdown, Parser, Roxy};
@@ -108,13 +110,33 @@ impl<'a, P: AsRef<Path> + 'a> FilePath<'a, P> {
 
 fn main() -> Result<(), RoxyError> {
     let opts = Options::parse();
+
+    let file_path = FilePath::new(&opts.input, &opts.output);
+    let files = get_files(&file_path.input)?;
+    let (meta, files): (Vec<&PathBuf>, Vec<&PathBuf>) =
+        files.iter().partition(|f| f.extension().unwrap() == "toml");
+
+    let mut context = tera::Context::new();
+    for path in meta {
+        let mut buf = Vec::new();
+
+        let mut file = File::open(path).map(BufReader::new).unwrap();
+        file.read_to_end(&mut buf).unwrap();
+        let mut str = String::from_utf8(buf).unwrap();
+        let toml: Table = toml::from_str(&mut str).unwrap();
+
+        for (k, v) in toml.iter() {
+            context.insert(k, v);
+        }
+    }
+
     let mut parser = Parser::new();
     parser.push(Markdown::new());
-    let html = Html::default();
-    parser.push(html);
-    let file_path = FilePath::new(&opts.input, &opts.output);
 
-    for file in get_files(&file_path.input)? {
+    let html = Html::new(tera::Tera::default(), context);
+    parser.push(html);
+
+    for file in files {
         let file_name = file.with_extension("html");
         let _ = Roxy::process_file(&file, &(&file_path.to_output(&file_name)?), &mut parser);
     }
