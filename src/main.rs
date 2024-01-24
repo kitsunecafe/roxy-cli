@@ -1,10 +1,12 @@
 use clap::Parser as Clap;
+use serde::Serialize;
 use std::{
     fs::File,
     io::{BufReader, Error, ErrorKind, Read},
-    path::{Path, PathBuf, StripPrefixError},
+    path::{self, Path, PathBuf, StripPrefixError},
+    str::FromStr,
 };
-use toml::Table;
+use toml::{Table, Value};
 
 use glob::{glob, PatternError};
 use roxy_core::roxy::{Html, Markdown, Parser, Roxy};
@@ -108,20 +110,27 @@ impl<'a, P: AsRef<Path> + 'a> FilePath<'a, P> {
     }
 }
 
+#[derive(Debug)]
 struct Context {
     pub inner: tera::Context,
 }
 
 impl Context {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             inner: tera::Context::new(),
         }
     }
 
-    pub fn insert<P: AsRef<Path>, K: Serialize, V: Serialize>(&mut self, path: &P, key: K, value: V) {
-        let path = path.as_ref();
-        self.inner.insert(&key, &value);
+    fn insert<P: AsRef<Path>>(&mut self, path: &P, meta: Table) {
+        let path = path
+            .as_ref()
+            .with_extension("")
+            .to_string_lossy()
+            .split(path::MAIN_SEPARATOR_STR)
+            .fold(String::new(), |a, b| format!("{a}.{b}"));
+
+        self.inner.insert(path.trim_start_matches('.'), &meta);
     }
 }
 
@@ -133,7 +142,7 @@ fn main() -> Result<(), RoxyError> {
     let (meta, files): (Vec<&PathBuf>, Vec<&PathBuf>) =
         files.iter().partition(|f| f.extension().unwrap() == "toml");
 
-    let mut context = tera::Context::new();
+    let mut context = Context::new();
     for path in meta {
         let mut buf = Vec::new();
 
@@ -142,15 +151,14 @@ fn main() -> Result<(), RoxyError> {
         let mut str = String::from_utf8(buf).unwrap();
         let toml: Table = toml::from_str(&mut str).unwrap();
 
-        for (k, v) in toml.iter() {
-            context.insert(k, v);
-        }
+        context.insert(&path.strip_prefix(&file_path.root_dir).unwrap(), toml);
     }
+
 
     let mut parser = Parser::new();
     parser.push(Markdown::new());
 
-    let html = Html::new(tera::Tera::default(), context);
+    let html = Html::new(tera::Tera::default(), context.inner);
     parser.push(html);
 
     for file in files {
