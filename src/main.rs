@@ -1,8 +1,6 @@
 use clap::Parser as Clap;
 use std::{
-    ffi,
     io::{Error, ErrorKind},
-    ops::Deref,
     path::{Path, PathBuf, StripPrefixError},
 };
 
@@ -22,6 +20,12 @@ pub struct Options {
 #[derive(Debug)]
 struct RoxyError {
     message: String,
+}
+
+impl From<String> for RoxyError {
+    fn from(value: String) -> Self {
+        Self { message: value }
+    }
 }
 
 impl From<PatternError> for RoxyError {
@@ -46,24 +50,42 @@ impl From<RoxyError> for Error {
     }
 }
 
-fn get_files(path: &str) -> Result<Vec<PathBuf>, RoxyError> {
-    glob(path)
-        .map(|p| p.filter_map(|x| x.ok()).collect())
-        .map_err(RoxyError::from)
+fn get_files<P: AsRef<Path> + std::fmt::Debug>(path: &P) -> Result<Vec<PathBuf>, RoxyError> {
+    let path = path
+        .as_ref()
+        .to_str()
+        .ok_or_else(|| RoxyError::from(format!("{path:?} is not a valid path.")))?;
+
+    let files: Vec<PathBuf> = glob(path)?
+        .filter_map(|x| x.ok())
+        .filter(|f| Path::is_file(f))
+        .collect();
+
+    Ok(files)
 }
 
+#[derive(Debug)]
 struct FilePath<'a, P: AsRef<Path>> {
-    input: &'a P,
+    input: PathBuf,
+    root_dir: PathBuf,
     output: &'a P,
 }
 
 impl<'a, P: AsRef<Path> + 'a> FilePath<'a, P> {
     pub fn new(input: &'a P, output: &'a P) -> Self {
-        Self { input, output }
+        Self {
+            input: Self::make_recursive(input),
+            root_dir: Self::strip_wildcards(input),
+            output,
+        }
     }
 
-    fn has_wildcard(path: &str) -> bool {
-        path.contains("*")
+    fn make_recursive(path: &'a P) -> PathBuf {
+        path.as_ref().join("**/*")
+    }
+
+    fn has_no_wildcard<S: AsRef<str>>(path: &S) -> bool {
+        !path.as_ref().contains("*")
     }
 
     fn strip_wildcards<P2: AsRef<Path> + ?Sized>(path: &'a P2) -> PathBuf {
@@ -71,15 +93,14 @@ impl<'a, P: AsRef<Path> + 'a> FilePath<'a, P> {
             .ancestors()
             .map(Path::to_str)
             .flatten()
-            .inspect(|f| println!("{f}"))
-            .skip_while(Self::has_wildcard)
-            .collect()
+            .find(Self::has_no_wildcard)
+            .map_or_else(|| PathBuf::new(), PathBuf::from)
     }
 
     pub fn to_output<P2: AsRef<Path>>(&self, value: &'a P2) -> Result<PathBuf, RoxyError> {
         value
             .as_ref()
-            .strip_prefix(Self::strip_wildcards(self.input))
+            .strip_prefix(&self.root_dir)
             .map(|path| self.output.as_ref().join(path))
             .map_err(RoxyError::from)
     }
@@ -93,8 +114,9 @@ fn main() -> Result<(), RoxyError> {
     parser.push(html);
     let file_path = FilePath::new(&opts.input, &opts.output);
 
-    for file in get_files(&opts.input)? {
-        Roxy::process_file(&file, &(&file_path.to_output(&file)?), &mut parser);
+    for file in get_files(&file_path.input)? {
+        let file_name = file.with_extension("html");
+        let _ = Roxy::process_file(&file, &(&file_path.to_output(&file_name)?), &mut parser);
     }
 
     Ok(())

@@ -816,6 +816,7 @@ dependencies = [
 [[package]]
 name = "roxy_core"
 version = "0.1.0"
+source = "git+https://github.com/kitsunecafe/roxy-core.git#42af0529bfc8259930c21b6edec94ba2793b0db1"
 dependencies = [
  "pulldown-cmark",
  "tera",
